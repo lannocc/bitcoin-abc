@@ -606,10 +606,10 @@ static bool IsMagneticAnomalyEnabledForCurrentBlock(const Config &config) {
 // <timestamp>. Defaults to the pre-defined timestamp when not set.
 static bool IsReplayProtectionEnabled(const Config &config,
                                       int64_t nMedianTimePast) {
-    return nMedianTimePast >= gArgs.GetArg("-replayprotectionactivationtime",
-                                           config.GetChainParams()
-                                               .GetConsensus()
-                                               .greatWallActivationTime);
+    return nMedianTimePast >=
+           gArgs.GetArg(
+               "-replayprotectionactivationtime",
+               config.GetChainParams().GetConsensus().greatWallActivationTime);
 }
 
 static bool IsReplayProtectionEnabled(const Config &config,
@@ -1115,54 +1115,60 @@ bool AcceptToMemoryPool(const Config &config, CTxMemPool &pool,
 
 /**
  * Return transaction in txOut, and if it was found inside a block, its hash is
- * placed in hashBlock.
+ * placed in hashBlock. If blockIndex is provided, mempool is skipped and the
+ * transaction is read from disk (and fAllowSlow has no effect; disk read is
+ * forced).
  */
 bool GetTransaction(const Config &config, const TxId &txid,
-                    CTransactionRef &txOut, uint256 &hashBlock,
-                    bool fAllowSlow) {
-    CBlockIndex *pindexSlow = nullptr;
+                    CTransactionRef &txOut, uint256 &hashBlock, bool fAllowSlow,
+                    CBlockIndex *blockIndex) {
+    CBlockIndex *pindexSlow = blockIndex;
 
     LOCK(cs_main);
 
-    CTransactionRef ptx = mempool.get(txid);
-    if (ptx) {
-        txOut = ptx;
-        return true;
-    }
-
-    if (fTxIndex) {
-        CDiskTxPos postx;
-        if (pblocktree->ReadTxIndex(txid, postx)) {
-            CAutoFile file(OpenBlockFile(postx, true), SER_DISK,
-                           CLIENT_VERSION);
-            if (file.IsNull()) {
-                return error("%s: OpenBlockFile failed", __func__);
-            }
-
-            CBlockHeader header;
-            try {
-                file >> header;
-                fseek(file.Get(), postx.nTxOffset, SEEK_CUR);
-                file >> txOut;
-            } catch (const std::exception &e) {
-                return error("%s: Deserialize or I/O error - %s", __func__,
-                             e.what());
-            }
-
-            hashBlock = header.GetHash();
-            if (txOut->GetId() != txid) {
-                return error("%s: txid mismatch", __func__);
-            }
-
+    // skip mempool checks if blockIndex was provided (block already known)
+    if (!blockIndex) {
+        CTransactionRef ptx = mempool.get(txid);
+        if (ptx) {
+            txOut = ptx;
             return true;
         }
-    }
 
-    // use coin database to locate block that contains transaction, and scan it
-    if (fAllowSlow) {
-        const Coin &coin = AccessByTxid(*pcoinsTip, txid);
-        if (!coin.IsSpent()) {
-            pindexSlow = chainActive[coin.GetHeight()];
+        if (fTxIndex) {
+            CDiskTxPos postx;
+            if (pblocktree->ReadTxIndex(txid, postx)) {
+                CAutoFile file(OpenBlockFile(postx, true), SER_DISK,
+                               CLIENT_VERSION);
+                if (file.IsNull()) {
+                    return error("%s: OpenBlockFile failed", __func__);
+                }
+
+                CBlockHeader header;
+                try {
+                    file >> header;
+                    fseek(file.Get(), postx.nTxOffset, SEEK_CUR);
+                    file >> txOut;
+                } catch (const std::exception &e) {
+                    return error("%s: Deserialize or I/O error - %s", __func__,
+                                 e.what());
+                }
+
+                hashBlock = header.GetHash();
+                if (txOut->GetId() != txid) {
+                    return error("%s: txid mismatch", __func__);
+                }
+
+                return true;
+            }
+        }
+
+        // use coin database to locate block that contains transaction, and scan
+        // it
+        if (fAllowSlow) {
+            const Coin &coin = AccessByTxid(*pcoinsTip, txid);
+            if (!coin.IsSpent()) {
+                pindexSlow = chainActive[coin.GetHeight()];
+            }
         }
     }
 

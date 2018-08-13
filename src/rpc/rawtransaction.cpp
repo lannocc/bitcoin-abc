@@ -129,9 +129,9 @@ void TxToJSON(const Config &config, const CTransaction &tx,
 static UniValue getrawtransaction(const Config &config,
                                   const JSONRPCRequest &request) {
     if (request.fHelp || request.params.size() < 1 ||
-        request.params.size() > 2) {
+        request.params.size() > 3) {
         throw std::runtime_error(
-            "getrawtransaction \"txid\" ( verbose )\n"
+            "getrawtransaction \"txid\" ( verbose ( \"blockid\" ) )\n"
 
             "\nNOTE: By default this function only works for mempool "
             "transactions. If the -txindex option is\n"
@@ -149,6 +149,8 @@ static UniValue getrawtransaction(const Config &config,
             "1. \"txid\"      (string, required) The transaction id\n"
             "2. verbose       (bool, optional, default=false) If false, return "
             "a string, otherwise return a json object\n"
+            "3. \"blockid\"   (string, optional) The block id; allows "
+            "retrieval when run without -txindex option (e.g. pruning enabled)"
 
             "\nResult (if verbose is not set or set to false):\n"
             "\"data\"      (string) The serialized, hex-encoded data for "
@@ -209,6 +211,8 @@ static UniValue getrawtransaction(const Config &config,
             "\nExamples:\n" +
             HelpExampleCli("getrawtransaction", "\"mytxid\"") +
             HelpExampleCli("getrawtransaction", "\"mytxid\" true") +
+            HelpExampleCli("getrawtransaction",
+                           "\"mytxid\" true \"myblockid\"") +
             HelpExampleRpc("getrawtransaction", "\"mytxid\", true"));
     }
 
@@ -234,14 +238,27 @@ static UniValue getrawtransaction(const Config &config,
         }
     }
 
+    CBlockIndex *blockindex = nullptr;
+    if (request.params.size() > 2) {
+        uint256 blockhash = ParseHashV(request.params[2], "parameter 3");
+
+        BlockMap::iterator it = mapBlockIndex.find(blockhash);
+        if (it == mapBlockIndex.end()) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                               "Block hash not found");
+        }
+        blockindex = it->second;
+    }
+
     CTransactionRef tx;
     uint256 hashBlock;
-    if (!GetTransaction(config, txid, tx, hashBlock, true)) {
+    if (!GetTransaction(config, txid, tx, hashBlock, true, blockindex)) {
         throw JSONRPCError(
             RPC_INVALID_ADDRESS_OR_KEY,
             std::string(fTxIndex ? "No such mempool or blockchain transaction"
                                  : "No such mempool transaction. Use -txindex "
-                                   "to enable blockchain transaction queries") +
+                                   "to enable blockchain transaction queries, "
+                                   "or specify the containing blockid") +
                 ". Use gettransaction for wallet transactions.");
     }
 
